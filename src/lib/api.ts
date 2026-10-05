@@ -59,3 +59,56 @@ export class ApiError extends Error {
 export function apiUrl(path: string): string {
     return `${API_URL}${path}`;
 }
+
+/**
+ * Download a protected endpoint as a file.
+ *
+ * A plain `<a href>` navigation cannot carry the Authorization header, so the
+ * response would come back as a 401 payload instead of the actual file.
+ */
+export async function apiDownload(path: string, fallbackFilename: string): Promise<string> {
+    const response = await apiFetch(path);
+
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new ApiError(
+            payload?.message ?? 'File gagal diunduh dari server.',
+            response.status,
+            payload?.errors ?? {},
+        );
+    }
+
+    const blob = await response.blob();
+    const filename = filenameFromDisposition(response.headers.get('Content-Disposition')) ?? fallbackFilename;
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    return filename;
+}
+
+/**
+ * Parse `Content-Disposition`, which the browser only exposes once the backend
+ * lists it in CORS `exposed_headers`.
+ */
+function filenameFromDisposition(header: string | null): string | null {
+    if (!header) return null;
+
+    const utf8 = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    if (utf8) {
+        try {
+            return decodeURIComponent(utf8[1]);
+        } catch {
+            return utf8[1];
+        }
+    }
+
+    const plain = header.match(/filename\s*=\s*"?([^";]+)"?/i);
+    return plain ? plain[1].trim() : null;
+}
